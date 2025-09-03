@@ -1,0 +1,96 @@
+# Model configuration for domain name generation
+model:
+  # Base model selection
+  base_model: "microsoft/DialoGPT-medium"  # Alternative: "microsoft/DialoGPT-large" or "gpt2-medium"
+  
+  # Fine-tuning parameters
+  training:
+    learning_rate: 5e-5
+    batch_size: 8
+    gradient_accumulation_steps: 4
+    num_epochs: 3
+    warmup_steps: 100
+    weight_decay: 0.01
+    max_grad_norm: 1.0
+    
+  # LoRA parameters (for parameter-efficient fine-tuning)
+  lora:
+    r: 16
+    lora_alpha: 32
+    lora_dropout: 0.1
+    target_modules: ["q_proj", "v_proj"]
+    
+  # Generation parameters
+  generation:
+    max_length: 50
+    temperature: 0.8
+    top_p: 0.9
+    do_sample: true
+    num_return_sequences: 5
+    
+  # Model saving
+  save_steps: 500
+  eval_steps: 500
+  logging_steps: 100
+
+# Dataset configuration
+dataset:
+  # Synthetic dataset parameters
+  synthetic:
+    num_samples: 10000
+    business_types: [
+      "tech_startup", "restaurant", "consulting", "ecommerce", 
+      "healthcare", "education", "finance", "real_estate",
+      "creative_agency", "manufacturing", "retail", "services"
+    ]
+    complexity_levels: ["simple", "medium", "complex"]
+    
+  # Training/validation split
+  train_split: 0.8
+  val_split: 0.1
+  test_split: 0.1
+  
+  # Data processing
+  max_input_length: 200
+  max_output_length: 50
+
+# Evaluation configuration
+evaluation:
+  # LLM-as-a-Judge settings
+  judge_model: "gpt-4"  # Alternative: "claude-3-sonnet" or "gpt-3.5-turbo"
+  
+  # Evaluation metrics
+  metrics:
+    - "relevance"
+    - "creativity"
+    - "uniqueness"
+    - "safety"
+    - "grammar"
+    
+  # Scoring scale
+  scoring_scale: 1-10
+  
+  # Evaluation prompts
+  prompts:
+    relevance: "Rate the relevance of this domain name to the business type (1-10):"
+    creativity: "Rate the creativity and originality of this domain name (1-10):"
+    uniqueness: "Rate how unique and memorable this domain name is (1-10):"
+    safety: "Rate if this domain name is appropriate and safe (1-10):"
+    grammar: "Rate the grammatical correctness of this domain name (1-10):"
+
+# Safety configuration
+safety:
+  # Inappropriate content filters
+  inappropriate_keywords: [
+    "hate", "violence", "discrimination", "illegal", "scam",
+    "spam", "malware", "phishing", "inappropriate"
+  ]
+  
+  # Business type restrictions
+  restricted_business_types: [
+    "illegal_services", "harmful_content", "scam_businesses"
+  ]
+  
+  # Content moderation
+  moderation_threshold: 0.7
+  rejection_message: "I cannot generate domain names for this type of business."
