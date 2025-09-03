@@ -15,6 +15,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
 from peft import PeftModel
 import uvicorn
 from datetime import datetime
+import re # Added for domain cleaning
 
 # Import our modules
 import sys
@@ -44,6 +45,18 @@ class SafetyCheckResponse(BaseModel):
     risk_score: float
     flagged_keywords: List[str]
     reason: str
+
+class BusinessDescriptionRequest(BaseModel):
+    business_description: str
+
+class DomainSuggestion(BaseModel):
+    domain: str
+    confidence: float
+
+class DomainSuggestionsResponse(BaseModel):
+    suggestions: List[DomainSuggestion]
+    status: str
+    message: Optional[str] = None
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -224,6 +237,125 @@ async def get_model_info():
         "safety_guardrails": safety_guardrails is not None,
         "evaluator": evaluator is not None
     }
+
+@app.post("/suggest-domains", response_model=DomainSuggestionsResponse)
+async def suggest_domains(request: BusinessDescriptionRequest):
+    """
+    Generate domain name suggestions based on business description.
+    
+    This endpoint provides a simplified interface for domain name generation
+    with built-in safety guardrails.
+    """
+    try:
+        # Safety check using the business description
+        is_safe, safety_message = safety_guardrails.filter_unsafe_content(
+            request.business_description
+        )
+        
+        if not is_safe:
+            return DomainSuggestionsResponse(
+                suggestions=[],
+                status="blocked",
+                message="Request contains inappropriate content"
+            )
+        
+        # Generate domain names using the model
+        generated_domains = generate_domain_names_with_model(
+            request.business_description,
+            num_sequences=3,  # Generate 3 suggestions as per example
+            temperature=0.8
+        )
+        
+        # Process and validate generated domains
+        suggestions = []
+        for domain in generated_domains:
+            # Clean up the domain (remove any extra text, ensure .com format)
+            clean_domain = clean_domain_name(domain)
+            
+            # Validate the generated domain
+            is_valid, validation_message = safety_guardrails.validate_generated_domain(
+                clean_domain, request.business_description
+            )
+            
+            if is_valid and clean_domain:
+                # Calculate confidence score based on domain quality
+                confidence = calculate_domain_confidence(clean_domain, request.business_description)
+                
+                suggestions.append(DomainSuggestion(
+                    domain=clean_domain,
+                    confidence=confidence
+                ))
+        
+        # Sort by confidence score (highest first)
+        suggestions.sort(key=lambda x: x.confidence, reverse=True)
+        
+        return DomainSuggestionsResponse(
+            suggestions=suggestions,
+            status="success"
+        )
+        
+    except Exception as e:
+        return DomainSuggestionsResponse(
+            suggestions=[],
+            status="error",
+            message=f"Generation failed: {str(e)}"
+        )
+
+def clean_domain_name(domain: str) -> str:
+    """Clean and format domain name."""
+    # Remove any extra text and keep only the domain part
+    domain = domain.strip()
+    
+    # Remove common prefixes/suffixes that might be added by the model
+    domain = re.sub(r'^domain:\s*', '', domain, flags=re.IGNORECASE)
+    domain = re.sub(r'^suggestion:\s*', '', domain, flags=re.IGNORECASE)
+    domain = re.sub(r'^name:\s*', '', domain, flags=re.IGNORECASE)
+    
+    # Ensure it has a .com extension if no TLD is present
+    if not re.search(r'\.(com|org|net|edu|gov|mil|int)$', domain, re.IGNORECASE):
+        domain = domain + '.com'
+    
+    # Remove any spaces and special characters that aren't valid in domains
+    domain = re.sub(r'[^\w\-\.]', '', domain)
+    
+    # Ensure it starts with a letter or number
+    if not re.match(r'^[a-zA-Z0-9]', domain):
+        domain = 'domain' + domain
+    
+    return domain.lower()
+
+def calculate_domain_confidence(domain: str, business_description: str) -> float:
+    """Calculate confidence score for a domain name."""
+    confidence = 0.5  # Base confidence
+    
+    # Check domain length (prefer shorter domains)
+    if len(domain) <= 15:
+        confidence += 0.1
+    elif len(domain) <= 20:
+        confidence += 0.05
+    else:
+        confidence -= 0.1
+    
+    # Check if domain contains relevant keywords from business description
+    business_words = set(re.findall(r'\b\w+\b', business_description.lower()))
+    domain_words = set(re.findall(r'\b\w+\b', domain.lower()))
+    
+    # Calculate keyword relevance
+    relevant_words = business_words.intersection(domain_words)
+    if relevant_words:
+        confidence += min(0.2, len(relevant_words) * 0.05)
+    
+    # Check for common domain patterns
+    if re.match(r'^[a-z0-9]+\.com$', domain):
+        confidence += 0.1
+    
+    # Penalize domains that are too generic
+    generic_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by'}
+    if domain_words.intersection(generic_words):
+        confidence -= 0.05
+    
+    # Ensure confidence is between 0.0 and 1.0
+    return max(0.0, min(1.0, confidence))
 
 def generate_domain_names_with_model(prompt: str, num_sequences: int = 5, temperature: float = 0.8) -> List[str]:
     """Generate domain names using the loaded model."""
